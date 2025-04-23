@@ -5,7 +5,6 @@ import 'package:permission_handler/permission_handler.dart';
 
 import 'main.dart';
 
-
 class ConnectScreen extends StatefulWidget {
   const ConnectScreen({Key? key}) : super(key: key);
 
@@ -26,6 +25,7 @@ class _ConnectScreenState extends State<ConnectScreen> {
   bool _permissionDenied = false;
   bool _isConnected = false;
   String _connectedDeviceId = "";
+  bool _hasNavigatedToDashboard = false; // Flag to prevent multiple navigations
 
   // UUIDs from your ESP32 code
   final Uuid serviceUuid = Uuid.parse("12345678-1234-1234-1234-1234567890ab");
@@ -117,6 +117,7 @@ class _ConnectScreenState extends State<ConnectScreen> {
       setState(() {
         _isConnected = false;
         _connectedDeviceId = "";
+        _hasNavigatedToDashboard = false; // Reset navigation flag when connecting to a new device
       });
 
       // Cancel any existing connection
@@ -189,7 +190,7 @@ class _ConnectScreenState extends State<ConnectScreen> {
             (data) {
           // Convert the data to a string (the ESP32 is sending strings)
           final receivedMessage = String.fromCharCodes(data);
-          print("📥 Received: $receivedMessage");
+          // print("📥 Received: $receivedMessage");
 
           setState(() {
             _receivedMessages.add(receivedMessage);
@@ -199,23 +200,7 @@ class _ConnectScreenState extends State<ConnectScreen> {
             }
           });
 
-          // After receiving some data, navigate to the dashboard
-          if (_receivedMessages.length > 3 && _isConnected) {
-            // Give some time to accumulate data
-            Future.delayed(Duration(seconds: 2), () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (context) => PowerDashboard(
-                    deviceId: deviceId,
-                    flutterReactiveBle: flutterReactiveBle,
-                    serviceUuid: serviceUuid,
-                    characteristicUuid: characteristicUuid,
-                  ),
-                ),
-              );
-            });
-          }
+          // Don't automatically navigate - we'll use a button instead
         },
         onError: (error) {
           print("Subscription error: $error");
@@ -228,6 +213,30 @@ class _ConnectScreenState extends State<ConnectScreen> {
       print("Error discovering services: $e");
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text("❌ Error discovering services: $e")),
+      );
+    }
+  }
+
+  // Method to navigate to the dashboard when the button is pressed
+  void _navigateToDashboard() {
+    if (!_hasNavigatedToDashboard) {
+      setState(() {
+        _hasNavigatedToDashboard = true;
+      });
+
+      // Cancel data subscription to prevent background processing
+      // _dataSubscription?.cancel();
+
+      Navigator.pushReplacement( // Using pushReplacement instead of push
+        context,
+        MaterialPageRoute(
+          builder: (context) => PowerDashboard(
+            deviceId: _connectedDeviceId,
+            flutterReactiveBle: flutterReactiveBle,
+            serviceUuid: serviceUuid,
+            characteristicUuid: characteristicUuid,
+          ),
+        ),
       );
     }
   }
@@ -342,6 +351,27 @@ class _ConnectScreenState extends State<ConnectScreen> {
                             },
                           ),
                         ),
+
+                        // Add View Dashboard button when we have received messages
+                        if (_receivedMessages.length > 3 && _isConnected)
+                          Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 16.0),
+                            child: ElevatedButton(
+                              onPressed: _navigateToDashboard,
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: Colors.yellow,
+                                padding: EdgeInsets.symmetric(horizontal: 32, vertical: 12),
+                              ),
+                              child: Text(
+                                'View Dashboard',
+                                style: TextStyle(
+                                  color: Colors.black,
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 16,
+                                ),
+                              ),
+                            ),
+                          ),
                       ],
                     ],
                   ),

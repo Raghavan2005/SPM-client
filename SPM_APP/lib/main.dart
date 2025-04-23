@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:fl_chart/fl_chart.dart';
 import 'package:spm_app/ConnectScreen.dart';
 import 'package:flutter_reactive_ble/flutter_reactive_ble.dart';
+
 void main() {
   runApp(MaterialApp(
     debugShowCheckedModeBanner: false,
@@ -14,7 +15,6 @@ class SmartPowerApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-
       theme: ThemeData(
         brightness: Brightness.dark,
         primarySwatch: Colors.yellow,
@@ -24,9 +24,6 @@ class SmartPowerApp extends StatelessWidget {
     );
   }
 }
-
-
-
 
 class PowerDashboard extends StatefulWidget {
   final String deviceId;
@@ -55,38 +52,115 @@ class _PowerDashboardState extends State<PowerDashboard> {
   bool autoMode = false;
   String systemStatus = "Normal";
   String lastUpdated = "-";
-  String appVersion = "v1.0.2";
+  String appVersion = "v1.0.3"; // Updated version number
   String integrityGrade = "Good";
   List<FlSpot> voltageHistory = [];
   List<FlSpot> currentHistory = [];
   int time = 0;
   List<String> messageLog = [];
+  bool _isProcessingData = false; // Flag to prevent reentrancy
+
+  // Maximum number of data points to display in charts
+  final int maxDataPoints = 10; // Reduced from 20 to 10 for better performance
+  // Maximum number of messages to keep in log
+  final int maxLogMessages = 15; // Reduced from 20 to 15
+
+  // Throttling variables
+  DateTime _lastUIUpdate = DateTime.now();
+  DateTime _lastChartUpdate = DateTime.now();
 
   StreamSubscription<List<int>>? _dataSubscription;
   StreamSubscription<ConnectionStateUpdate>? _connectionSubscription;
   bool isConnected = true;
 
+  // Buffer for handling high-frequency incoming data
+  final List<String> _messageBuffer = [];
+
   @override
   void initState() {
     super.initState();
     _setupBleConnection();
-    Timer.periodic(Duration(seconds: 1), (_) => updateData());
+
+    // Reduce update frequency from 1s to 2s
+    Timer.periodic(Duration(seconds: 2), (_) => updateChartData());
+
+    // Separate timer for processing buffered messages
+    Timer.periodic(Duration(milliseconds: 300), (_) {
+
+      if (!_isProcessingData) {
+        processBufferedMessages();
+      }
+    });
   }
 
+  // Throttle control for UI updates
+  bool _canUpdateUI() {
+    final now = DateTime.now();
+    if (now.difference(_lastUIUpdate).inMilliseconds > 300) {
+      _lastUIUpdate = now;
+      return true;
+    }
+    return false;
+  }
+
+  // Process buffered messages periodically instead of immediately
+  void processBufferedMessages() {
+    if (_messageBuffer.isEmpty || !mounted) return;
+
+    // Set processing flag to prevent reentrancy
+    _isProcessingData = true;
+
+    try {
+      // Take a snapshot of the buffer and clear it atomically
+      final List messagesToProcess = List.from(_messageBuffer);
+      _messageBuffer.clear();
+
+      // Process all messages in batch
+      for (final message in messagesToProcess) {
+        processESP32Message(message);
+
+        // Add to log
+        messageLog.add(message);
+        print(message); // This only goes to debug console
+      }
+
+      // Efficiently trim message log if needed
+      if (messageLog.length > maxLogMessages) {
+        messageLog = messageLog.sublist(messageLog.length - maxLogMessages);
+      }
+
+      // Update UI to show messages in messageLog
+      setState(() {
+        lastUpdated = DateTime.now().toLocal().toString().substring(0, 19);
+        // Make sure you're actually displaying messageLog somewhere in your UI
+      });
+
+    } finally {
+      // Always reset processing flag
+      _isProcessingData = false;
+    }
+  }
   void _setupBleConnection() {
     // Monitor connection state
     _connectionSubscription = widget.flutterReactiveBle.connectToDevice(
       id: widget.deviceId,
     ).listen((connectionState) {
       print("Connection state: ${connectionState.connectionState}");
-      setState(() {
-        isConnected = connectionState.connectionState == DeviceConnectionState.connected;
-      });
 
-      if (!isConnected) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("❌ Disconnected from ESP32")),
-        );
+      // Only update UI if connection state actually changed
+      final bool newConnectionState =
+          connectionState.connectionState == DeviceConnectionState.connected;
+
+      if (newConnectionState != isConnected) {
+        setState(() {
+          isConnected = newConnectionState;
+        });
+
+        if (!isConnected) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text("❌ Disconnected from ESP32")),
+          );
+        }
       }
     });
 
@@ -103,14 +177,10 @@ class _PowerDashboardState extends State<PowerDashboard> {
       final message = String.fromCharCodes(data);
       print("📥 Dashboard received: $message");
 
-      // Process messages from ESP32
-      processESP32Message(message);
-
-      setState(() {
-        messageLog.add(message);
-        if (messageLog.length > 20) messageLog.removeAt(0);
-        lastUpdated = DateTime.now().toLocal().toString().substring(0, 19);
-      });
+      // Don't process immediately, just buffer the message
+      if (mounted && _messageBuffer.length < 100) { // Prevent buffer overflow
+        _messageBuffer.add(message);
+      }
     }, onError: (error) {
       print("Subscription error: $error");
     });
@@ -149,44 +219,78 @@ class _PowerDashboardState extends State<PowerDashboard> {
     }
   }
 
-  void updateData() {
+  void updateChartData() {
     if (!mounted) return;
 
+    // Only update charts if enough time has passed
+    final now = DateTime.now();
+    if (now.difference(_lastChartUpdate).inMilliseconds < 1000) {
+      return;
+    }
+    _lastChartUpdate = now;
+
+    // Calculate new data outside setState
+    double newVoltage = voltage;
+    double newCurrent = current;
+
+    // Only update these values if we haven't received specific data from ESP32
+    if (systemStatus != "Critical") {
+      newVoltage = (4.5 + (0.5 * (0.5 - (DateTime.now().second % 10) / 10)));
+    }
+
+    newCurrent = 0.6 + (0.05 * (DateTime.now().second % 5));
+    double newPower = newVoltage * newCurrent;
+    String newStatus = newVoltage < 4.3 ? "Critical" : (newVoltage < 4.6 ? "Warning" : "Normal");
+    String newGrade = newVoltage < 4.3 ? "Poor" : (newVoltage < 4.6 ? "Moderate" : "Good");
+
+    // Update chart data outside setState to avoid rebuilding
+    voltageHistory.add(FlSpot(time.toDouble(), newVoltage));
+    currentHistory.add(FlSpot(time.toDouble(), newCurrent));
+
+    // Efficient batch trimming of history lists
+    if (voltageHistory.length > maxDataPoints) {
+      voltageHistory = voltageHistory.sublist(voltageHistory.length - maxDataPoints);
+    }
+
+    if (currentHistory.length > maxDataPoints) {
+      currentHistory = currentHistory.sublist(currentHistory.length - maxDataPoints);
+    }
+
+    time++;
+
+    // Now update the UI
     setState(() {
-      // Only update these values if we haven't received specific data from ESP32
-      if (systemStatus != "Critical") {
-        voltage = (4.5 + (0.5 * (0.5 - (DateTime.now().second % 10) / 10)));
-        systemStatus = voltage < 4.3 ? "Critical" : (voltage < 4.6 ? "Warning" : "Normal");
-        integrityGrade = voltage < 4.3 ? "Poor" : (voltage < 4.6 ? "Moderate" : "Good");
-      }
-
-      current = 0.6 + (0.05 * (DateTime.now().second % 5));
-      power = voltage * current;
-
-      voltageHistory.add(FlSpot(time.toDouble(), voltage));
-      currentHistory.add(FlSpot(time.toDouble(), current));
-      if (voltageHistory.length > 20) voltageHistory.removeAt(0);
-      if (currentHistory.length > 20) currentHistory.removeAt(0);
-      time++;
+      voltage = newVoltage;
+      current = newCurrent;
+      power = newPower;
+      systemStatus = newStatus;
+      integrityGrade = newGrade;
     });
   }
 
   void toggleRelay() {
-    // In a real implementation, we would send a command to the ESP32
-    // to toggle the relay. For now, we'll just update the UI
     setState(() {
       relayOn = !relayOn;
       loadSource = relayOn ? "Main" : "Generator";
     });
-
-    // This is where you would send a command to ESP32
-    // (would require a write characteristic, which is not in your ESP32 code)
   }
 
   void toggleAutoMode(bool value) {
     setState(() {
       autoMode = value;
     });
+  }
+
+  // Method to return to connect screen safely
+  void _backToConnectScreen() {
+    // Cancel subscriptions to prevent data processing in background
+    _dataSubscription?.cancel();
+    _connectionSubscription?.cancel();
+
+    Navigator.pushReplacement(
+      context,
+      MaterialPageRoute(builder: (context) => ConnectScreen()),
+    );
   }
 
   @override
@@ -203,6 +307,10 @@ class _PowerDashboardState extends State<PowerDashboard> {
         title: Text('Smart Power Dashboard - Client',
             style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold)),
         backgroundColor: Colors.yellow,
+        leading: IconButton(
+          icon: Icon(Icons.arrow_back, color: Colors.black),
+          onPressed: _backToConnectScreen, // Use custom back method
+        ),
         actions: [
           // Connection status indicator
           Padding(
@@ -364,6 +472,7 @@ class _PowerDashboardState extends State<PowerDashboard> {
                         borderRadius: BorderRadius.circular(10),
                       ),
                       child: ListView.builder(
+                        // Use a more efficient approach for lists
                         itemCount: messageLog.length,
                         itemBuilder: (context, index) {
                           return Text(
@@ -407,10 +516,14 @@ class _PowerDashboardState extends State<PowerDashboard> {
       return Center(child: Text('No voltage data available'));
     }
 
+    // Calculate chart range based on available data
+    double minX = voltageHistory.isNotEmpty ? voltageHistory.first.x : 0;
+    double maxX = voltageHistory.isNotEmpty ? voltageHistory.last.x : 20;
+
     return LineChart(
       LineChartData(
-        minX: time > 20 ? (time - 20).toDouble() : 0,
-        maxX: time > 0 ? time.toDouble() : 20,
+        minX: minX,
+        maxX: maxX,
         minY: 4.0,
         maxY: 5.2,
         titlesData: FlTitlesData(
@@ -439,17 +552,20 @@ class _PowerDashboardState extends State<PowerDashboard> {
       ),
     );
   }
-
   Widget currentChart() {
     // Check if the data list is empty before rendering
     if (currentHistory.isEmpty) {
       return Center(child: Text('No current data available'));
     }
 
+    // Calculate chart range based on available data
+    double minX = currentHistory.isNotEmpty ? currentHistory.first.x : 0;
+    double maxX = currentHistory.isNotEmpty ? currentHistory.last.x : 20;
+
     return LineChart(
       LineChartData(
-        minX: time > 20 ? (time - 20).toDouble() : 0,
-        maxX: time > 0 ? time.toDouble() : 20,
+        minX: minX,
+        maxX: maxX,
         minY: 0.5,
         maxY: 1.2,
         titlesData: FlTitlesData(

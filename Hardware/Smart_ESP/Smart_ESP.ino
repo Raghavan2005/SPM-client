@@ -24,12 +24,12 @@ bool deviceConnected = false;
 class MyServerCallbacks : public BLEServerCallbacks {
   void onConnect(BLEServer* pServer) {
     deviceConnected = true;
-    Serial.println("📲 BLE Device Connected");
+    Serial.println("BLE Device Connected");
   }
 
   void onDisconnect(BLEServer* pServer) {
     deviceConnected = false;
-    Serial.println("❌ BLE Device Disconnected");
+    Serial.println(" BLE Device Disconnected");
   }
 };
 
@@ -67,20 +67,19 @@ void setup() {
   pService->start();
   pServer->getAdvertising()->start();
 
-  sendBLEMessage("🔌 System Initialized - BLE Ready");
+  sendBLEMessage(" System Initialized - BLE Ready");
 }
 
 void loop() {
   bool loadSimulated = digitalRead(loadSwitchPin) == LOW;
 
-  sendBLEMessage("🧪 Load: " + String(loadSimulated ? "HIGH" : "LOW"));
-
+  sendBLEMessage("Load: " + String(loadSimulated ? "HIGH" : "LOW"));
   if (loadSimulated && millis() % 10000 < 1000) {
     digitalWrite(buzzerPin, HIGH);
     digitalWrite(ledPin, HIGH);
     digitalWrite(relayPin, LOW);
     generatorOn = false;
-    sendBLEMessage("⚠️ Overload! Buzzer+LED ON, Generator OFF.");
+    sendBLEMessage("Overload! Buzzer+LED ON, Generator OFF.");
     delay(1000);
     return;
   } else {
@@ -91,7 +90,7 @@ void loop() {
   if (loadSimulated && !generatorOn) {
     digitalWrite(relayPin, HIGH);
     generatorOn = true;
-    sendBLEMessage("✅ Generator ON due to load.");
+    sendBLEMessage(" Generator ON due to load.");
   }
 
   if (!loadSimulated && generatorOn) {
@@ -102,18 +101,18 @@ void loop() {
       digitalWrite(relayPin, LOW);
       generatorOn = false;
       lastLowStartTime = 0;
-      sendBLEMessage("🛑 Generator OFF after delay.");
+      sendBLEMessage("Generator OFF after delay.");
     } else {
-      sendBLEMessage("⌛ Waiting... " + String(millis() - lastLowStartTime) + " ms");
+      sendBLEMessage(" Waiting... " + String(millis() - lastLowStartTime) + " ms");
     }
   } else {
     lastLowStartTime = 0;
   }
 
-  sendBLEMessage("🔁 Generator: " + String(generatorOn ? "ON" : "OFF"));
-  sendBLEMessage("🔈 Buzzer: " + String(digitalRead(buzzerPin) ? "ON" : "OFF"));
-  sendBLEMessage("💡 LED: " + String(digitalRead(ledPin) ? "ON" : "OFF"));
+  sendBLEMessage("Generator: " + String(generatorOn ? "ON" : "OFF"));
+  sendBLEMessage(" Buzzer: " + String(digitalRead(buzzerPin) ? "ON" : "OFF"));
+  sendBLEMessage(" LED: " + String(digitalRead(ledPin) ? "ON" : "OFF"));
   sendBLEMessage("--------------------------------------------------");
 
-  delay(500);
+  delay(3000);
 }
