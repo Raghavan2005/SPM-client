@@ -1,5 +1,6 @@
 
 # 🚀 Project Title: Smart-Power-Management-SPM-client
+![image](https://github.com/user-attachments/assets/45b09922-4006-460a-9252-0c3c656dd30a)
 
 ## 📌 Overview
 A smart power management system using ESP32 for real-time monitoring and automatic switching between primary and backup power sources. It features load balancing, overcurrent protection, and is ideal for smart homes and IoT-based microgrid applications.
